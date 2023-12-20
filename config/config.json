@@ -1,0 +1,6 @@
+{
+    "reward_config_path": "/sim_ws/src/reward_configs/progress.json",
+    "agent_config_path": "/sim_ws/src/agent_configs/ftg_middle.json",
+    "reset_agent_path": "/sim_ws/src/agent_configs/reset_agent.json",
+    "track_path": "/sim_ws/src/f1tenth_gym_ros/maps/Infsaal/Infsaal_centerline.csv"
+}
