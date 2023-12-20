@@ -1,0 +1,8 @@
+{
+    "agent_class": "SwitchingAgent",
+    "agent_parameters": {
+        "agent1": "/sim_ws/src/agent_configs/ftg_fast_5.json",
+        "agent2": "/sim_ws/src/agent_configs/ftg_slow_5.json",
+        "switching_timestep": 100
+    }
+}

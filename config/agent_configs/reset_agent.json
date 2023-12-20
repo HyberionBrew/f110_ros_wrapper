@@ -1,0 +1,9 @@
+{
+    "agent_class": "PPAgent",
+    "agent_parameters": {
+        "deterministic": true,
+        "raceline_file": "/sim_ws/src/f1tenth_gym_ros/maps/Infsaal/Infsaal_centerline.csv",
+        "fixed_speed": 0.5,
+        "resetting": true
+    }
+}
