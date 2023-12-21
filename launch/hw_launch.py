@@ -9,7 +9,8 @@ def generate_launch_description():
             name='ros_ftg_agent_node',
             output='screen',
             remappings=[
-                ('/odom', 'vesc/odom'),
+                ('ego_racecar/odom', '/pf/pose/odom'),
+                ('drive', 'backup_drive'),
                 # Add more remappings as needed
             ],
             # You can also add parameters here if needed

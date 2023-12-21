@@ -39,6 +39,7 @@ class Track():
 
     def load_track(self,file):
         # open and read in the track, a csv with x_m, x_y, vx_mps, delta_rad 
+        
         track = np.loadtxt(file, delimiter=',')
         return track
 
@@ -49,8 +50,9 @@ class AgentRollout(Node):
         self.get_logger().info("Rollout agent node started!")
         # agent is a numpy agent!
         # TODO! adjust and make argument?
+        print(track_path)
         self.track = Track(track_path)
-        self.progress = Progress(self.track)
+        self.progress = Progress(self.track, lookahead=200)
         model_name = str(agent)
         with open(f"dataset/{model_name}", 'w') as f:
             pass
@@ -65,6 +67,7 @@ class AgentRollout(Node):
         self.inital_pose_sub = self.create_subscription(PoseWithCovarianceStamped, 'initialpose', self.inital_pose_callback, 10)
         self.publisher = self.create_publisher(MarkerArray, 'visualization_marker_array', 10)
         self.marker_publisher = self.create_publisher(Marker, 'visualization_marker', 10)
+        self.waypoint_publisher = self.create_publisher(Marker, 'waypoint_marker', 10)
         timer_period = 1/20  # seconds (20 Hz)
         self.timer = self.create_timer(timer_period, self.execute_agent)
         self.agent = agent
@@ -97,7 +100,7 @@ class AgentRollout(Node):
         marker.scale.x = 1.0  # Adjust the size of the sphere
         marker.scale.y = 1.0
         marker.scale.z = 1.0
-        marker.pose.position = Point(x=-3.0, y=-1.0, z=0.0)  # Set the position of the sphere
+        marker.pose.position = Point(x=-2.0, y=-2.0, z=0.0)  # Set the position of the sphere
 
         # Set the color based on self.state
         if self.state == "recording":
@@ -109,12 +112,31 @@ class AgentRollout(Node):
 
         # Publish the marker
         self.marker_publisher.publish(marker)
+        
+    def publish_waypoint(self, x, y):
+        marker = Marker()
+        marker.header.frame_id = "map"  # or your relevant frame
+        marker.type = marker.SPHERE
+        marker.action = marker.ADD
+        marker.scale.x = 0.2  # Adjust the size of the sphere
+        marker.scale.y = 0.2
+        marker.scale.z = 0.2
+        marker.pose.position = Point(x=x, y=y, z=0.0)  # Set the position of the sphere
+
+        marker.color = ColorRGBA(r=0.0, g=1.0, b=0.0, a=1.0)  # Green
+
+        # Publish the marker
+        self.waypoint_publisher.publish(marker)
     
     def inital_pose_callback(self, msg):
         # reset the agent
         print("Resetting agent")
         self.agent.reset()
+        self.get_logger().info("resetting pose")
+        self.get_logger().info(f"Pose {msg.pose.pose.position.x} {msg.pose.pose.position.y}")
+        self.get_logger().info(f"progress {self.progress.previous_closest_idx}")
         self.progress.reset([msg.pose.pose.position.x, msg.pose.pose.position.y])
+        self.get_logger().info(f"progress {self.progress.previous_closest_idx}")
         self.current_pose = None
         self.current_speed = 0.0
         self.current_angle = 0.0
@@ -154,9 +176,9 @@ class AgentRollout(Node):
 
     def get_pose(self, msg):
         # TODO! disable this on real car again!!
-        if self.drop_curr_pose % 10 == 0:
-            self.current_pose = msg
-            self.drop_curr_pose = 0
+        #if self.drop_curr_pose % 10 == 0:
+        self.current_pose = msg
+        self.drop_curr_pose = 0
         self.drop_curr_pose += 1
 
     def detect_collision(self):
@@ -213,7 +235,8 @@ class AgentRollout(Node):
 
     def execute_agent(self):
         if self.current_pose is None or self.current_lidar_occupancy is None:
-            print("waiting for pose and lidar data")
+            #print("waiting for pose and lidar data")
+            self.get_logger().info("waiting for pose and lidar data")
             return
         
         if self.initial == True:
@@ -229,7 +252,9 @@ class AgentRollout(Node):
         lidar_data, timestamp_lidar = self.current_lidar_occupancy
         lidar_data = lidar_data.copy()
         # subsample
+        lidar_data = lidar_data[:1080]
         lidar_data = lidar_data[::self.agent.subsample]
+       
         # normalize the lidar data
         lidar_data = lidar_data / 10.0 # TODO make this not hardcoded
         # remove lidar data larger than 1   
@@ -259,7 +284,10 @@ class AgentRollout(Node):
         obs['theta_sin'] = np.array([np.sin(theta)],dtype=np.float32)
         obs['theta_cos'] = np.array([np.cos(theta)],dtype=np.float32)
         # print("Pose", x, y)
+        self.get_logger().info(f"Pose {x} {y}")
+        self.get_logger().info(f"progress {self.progress.previous_closest_idx}")
         new_progress = self.progress.get_progress(np.array([[x, y]]))
+        self.get_logger().info(f"progress {self.progress.previous_closest_idx}")
         # print("new progress", new_progress)
         obs['progress_sin'] = np.array(np.sin(new_progress),dtype=np.float32)
         obs['progress_cos'] = np.array(np.cos(new_progress),dtype=np.float32)
@@ -269,21 +297,31 @@ class AgentRollout(Node):
         #    obs[key] = np.expand_dims(obs[key], axis=0)
         obs['lidar_occupancy'] = np.expand_dims(obs['lidar_occupancy'], axis=0)
         ######## FINISHED CREATING OBSERVATION DICTIONARY ########
-
+        #print(obs['lidar_occupancy'])
+        #print(obs['lidar_occupancy'].shape)
         assert obs['lidar_occupancy'].shape == (1, 1080//self.agent.subsample)
-
+        
+        self.state = "resetting"
         ######## HANDLE ACTION ########
         # A bit of a mess with all the global variables - ups 
+        self.get_logger().info(f"current progress {new_progress}")
         if self.state == "resetting":
-            _, action, log_prob = self.reset_agent(obs, deaccelerate=self.deaccelerate)
+            info, action, log_prob = self.reset_agent(obs, deaccelerate=self.deaccelerate)
+            waypoint = info[0]
+            xx = float(self.track.centerline.xs[waypoint])
+            yy = float(self.track.centerline.ys[waypoint])
+            self.get_logger().info(f"{xx} {yy}")
+            self.publish_waypoint(xx,yy)
+            
             if self.target_start is None:
-                print("Available starting points", self.starting_points_progress)
+                print()
+                self.get_logger().info(f"Available starting points {self.starting_points_progress}")
                 self.target_start, self.starting_points_progress = self.find_and_remove_closest(self.starting_points_progress,new_progress, wrap_around=0.2)
-                print("picked starting point", self.target_start)
-
+                self.get_logger().info(f"picked starting point {self.target_start}")
+                
                 if self.starting_points_progress.size == 0:
                     self.starting_points_progress = np.linspace(0, 1, self.num_starting_points + 1)[1:] 
-                print("remaining", self.starting_points_progress)
+                #print("remaining", self.starting_points_progress)
             # if we are within 0.05 of the target start, set deaccelerate to true
             else:
                 if (abs(self.target_start - new_progress) < 0.05) and not self.deaccelerate:
@@ -294,12 +332,13 @@ class AgentRollout(Node):
                 if self.deaccelerate and self.timestep > 20:
                     self.deaccelerate = False
                     self.state = "recording"
-                    print(f"Recording trajectory: {self.trajectory_num}")
+                    self.get_logger().info(f"Recording trajectory: {self.trajectory_num}")
+                    #print(f"Recording trajectory: {self.trajectory_num}")
                     self.timestep = 0
                     self.trajectory_num += 1
                     self.target_start = None
-                    if self.trajectory_num == 100:
-                        exit()
+                    #if self.trajectory_num == 100:
+                    #    exit()
                 #if self.deaccelerate:
                     #print("waiting",self.timestep)
                     #print(action)
@@ -349,8 +388,8 @@ class AgentRollout(Node):
         ackermann_command.drive = ackerman_drive
         self.ackermann_pub.publish(ackermann_command)
         # check if we will be crashing soon
-        terminate = self.should_stop(self.current_lidar_occupancy[0], 
-                                    obs['linear_vels_x'][0])
+        terminate = False #self.should_stop(self.current_lidar_occupancy[0], 
+        #          obs['linear_vels_x'][0])
         
         if terminate == True:
             pass
@@ -382,7 +421,7 @@ class AgentRollout(Node):
             time_infos["action_timestamp"] = timestamp.sec + timestamp.nanosec * 1e-9
             #print("action, timestamp", )
             done = terminate
-            if True:
+            if False:
                 # print(model_name)
                 with open(f"dataset/{model_name}", 'ab') as f:
                     collision=terminate
@@ -420,7 +459,7 @@ class AgentRollout(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    config_file_path = "/sim_ws/src/ros_ftg_agent/config/config.json"  # Update with the actual path
+    config_file_path = "/home/rindt/racecar_ws/src/f110_ros_wrapper/config/config.json"  # Update with the actual path
     with open(config_file_path, 'r') as config_file:
         config = json.load(config_file)
 
