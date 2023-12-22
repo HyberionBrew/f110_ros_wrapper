@@ -68,6 +68,7 @@ class AgentRollout(Node):
         self.publisher = self.create_publisher(MarkerArray, 'visualization_marker_array', 10)
         self.marker_publisher = self.create_publisher(Marker, 'visualization_marker', 10)
         self.waypoint_publisher = self.create_publisher(Marker, 'waypoint_marker', 10)
+        self.start_publisher = self.create_publisher(Marker, 'start_marker', 10)
         timer_period = 1/20  # seconds (20 Hz)
         self.timer = self.create_timer(timer_period, self.execute_agent)
         self.agent = agent
@@ -128,6 +129,22 @@ class AgentRollout(Node):
         # Publish the marker
         self.waypoint_publisher.publish(marker)
     
+    def publish_start_point(self, x, y):
+        marker = Marker()
+        marker.header.frame_id = "map"  # or your relevant frame
+        marker.type = marker.SPHERE
+        marker.action = marker.ADD
+        marker.scale.x = 0.2  # Adjust the size of the sphere
+        marker.scale.y = 0.2
+        marker.scale.z = 0.2
+        marker.pose.position = Point(x=x, y=y, z=0.0)  # Set the position of the sphere
+
+        marker.color = ColorRGBA(r=0.0, g=0.0, b=1.0, a=1.0)  # Green
+
+        # Publish the marker
+        self.start_publisher.publish(marker)
+
+
     def inital_pose_callback(self, msg):
         # reset the agent
         print("Resetting agent")
@@ -252,7 +269,7 @@ class AgentRollout(Node):
         lidar_data, timestamp_lidar = self.current_lidar_occupancy
         lidar_data = lidar_data.copy()
         # subsample
-        lidar_data = lidar_data[:1080]
+        lidar_data = lidar_data[:1080] # saveguard againts having more than 1080 points (e.g. 1081 like on the real car -.-)
         lidar_data = lidar_data[::self.agent.subsample]
        
         # normalize the lidar data
@@ -301,7 +318,7 @@ class AgentRollout(Node):
         #print(obs['lidar_occupancy'].shape)
         assert obs['lidar_occupancy'].shape == (1, 1080//self.agent.subsample)
         
-        self.state = "resetting"
+        # self.state = "resetting"
         ######## HANDLE ACTION ########
         # A bit of a mess with all the global variables - ups 
         self.get_logger().info(f"current progress {new_progress}")
@@ -318,7 +335,13 @@ class AgentRollout(Node):
                 self.get_logger().info(f"Available starting points {self.starting_points_progress}")
                 self.target_start, self.starting_points_progress = self.find_and_remove_closest(self.starting_points_progress,new_progress, wrap_around=0.2)
                 self.get_logger().info(f"picked starting point {self.target_start}")
-                
+                # transform target start to a index in the track
+                start_index = int(self.target_start * len(self.track.centerline.xs))
+                s_x = float(self.track.centerline.xs[start_index])
+                s_y = float(self.track.centerline.ys[start_index])
+                self.publish_start_point(s_x, s_y)
+
+
                 if self.starting_points_progress.size == 0:
                     self.starting_points_progress = np.linspace(0, 1, self.num_starting_points + 1)[1:] 
                 #print("remaining", self.starting_points_progress)
@@ -459,7 +482,7 @@ class AgentRollout(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    config_file_path = "/home/rindt/racecar_ws/src/f110_ros_wrapper/config/config.json"  # Update with the actual path
+    config_file_path = "/sim_ws/src/ros_ftg_agent/config/config.json"  # Update with the actual path
     with open(config_file_path, 'r') as config_file:
         config = json.load(config_file)
 
