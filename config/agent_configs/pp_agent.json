@@ -1,0 +1,9 @@
+{
+    "agent_class": "PPAgent",
+    "agent_parameters": {
+        "deterministic": false,
+        "raceline_file": "/sim_ws/src/agent/stochastic_ftg_agents/f110_agents/2112fallstudienlabor_mintime_3.0_3.0_3.0_rl.csv",
+        "fixed_speed": 0.5,
+        "resetting": false
+    }
+}
