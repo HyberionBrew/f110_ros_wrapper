@@ -21,6 +21,8 @@ from visualization_msgs.msg import Marker, MarkerArray
 from std_msgs.msg import ColorRGBA
 from geometry_msgs.msg import Point
 import json
+# import ros imu message vesc_msgs
+from vesc_msgs.msg import VescImuStamped
 
 class Raceline():
     def __init__(self):
@@ -59,6 +61,7 @@ class AgentRollout(Node):
         self.initial = False
         self.timestep = 0
         self.current_lidar_occupancy = None
+        self.current_imu = None
         self.laser_scan_sub = self.create_subscription(LaserScan, 'scan', self.get_laser_scan, 10)
         self.current_pose = None
         self.pose_sub = self.create_subscription(Odometry, 'ego_racecar/odom', self.get_pose, 10)
@@ -69,11 +72,13 @@ class AgentRollout(Node):
         self.marker_publisher = self.create_publisher(Marker, 'visualization_marker', 10)
         self.waypoint_publisher = self.create_publisher(Marker, 'waypoint_marker', 10)
         self.start_publisher = self.create_publisher(Marker, 'start_marker', 10)
+        self.imu_subscriber = self.create_subscription(VescImuStamped, 'sensors/imu', self.get_imu, 10)
         timer_period = 1/20  # seconds (20 Hz)
         self.timer = self.create_timer(timer_period, self.execute_agent)
         self.agent = agent
         self.reset_agent = reset_agent
         self.state = "resetting"
+        
 
         self.current_speed = 0.0
         self.current_angle = 0.0
@@ -198,6 +203,10 @@ class AgentRollout(Node):
         self.drop_curr_pose = 0
         self.drop_curr_pose += 1
 
+
+    def get_imu(self, msg):
+        self.current_imu = msg
+
     def detect_collision(self):
         pass
 
@@ -251,7 +260,7 @@ class AgentRollout(Node):
         return closest_value, array
 
     def execute_agent(self):
-        if self.current_pose is None or self.current_lidar_occupancy is None:
+        if self.current_pose is None or self.current_lidar_occupancy is None or self.current_imu is None:
             #print("waiting for pose and lidar data")
             self.get_logger().info("waiting for pose and lidar data")
             return
@@ -301,10 +310,9 @@ class AgentRollout(Node):
         obs['theta_sin'] = np.array([np.sin(theta)],dtype=np.float32)
         obs['theta_cos'] = np.array([np.cos(theta)],dtype=np.float32)
         # print("Pose", x, y)
-        self.get_logger().info(f"Pose {x} {y}")
-        self.get_logger().info(f"progress {self.progress.previous_closest_idx}")
+        #self.get_logger().info(f"Pose {x} {y}")
         new_progress = self.progress.get_progress(np.array([[x, y]]))
-        self.get_logger().info(f"progress {self.progress.previous_closest_idx}")
+        #self.get_logger().info(f"progress {self.progress.previous_closest_idx}")
         # print("new progress", new_progress)
         obs['progress_sin'] = np.array(np.sin(new_progress),dtype=np.float32)
         obs['progress_cos'] = np.array(np.cos(new_progress),dtype=np.float32)
@@ -321,7 +329,10 @@ class AgentRollout(Node):
         # self.state = "resetting"
         ######## HANDLE ACTION ########
         # A bit of a mess with all the global variables - ups 
-        self.get_logger().info(f"current progress {new_progress}")
+        if self.timestep % 20 == 0:
+            self.get_logger().info(f"current progress {new_progress}")
+        
+        
         if self.state == "resetting":
             info, action, log_prob = self.reset_agent(obs, deaccelerate=self.deaccelerate)
             waypoint = info[0]
@@ -336,7 +347,7 @@ class AgentRollout(Node):
                 self.target_start, self.starting_points_progress = self.find_and_remove_closest(self.starting_points_progress,new_progress, wrap_around=0.2)
                 self.get_logger().info(f"picked starting point {self.target_start}")
                 # transform target start to a index in the track
-                start_index = int(self.target_start * len(self.track.centerline.xs))
+                start_index = int(self.target_start * len(self.track.centerline.xs))% len(self.track.centerline.xs)
                 s_x = float(self.track.centerline.xs[start_index])
                 s_y = float(self.track.centerline.ys[start_index])
                 self.publish_start_point(s_x, s_y)
@@ -399,6 +410,9 @@ class AgentRollout(Node):
         
         self.current_speed += action[1]
         self.current_angle += action[0]
+
+        self.current_speed = max(self.current_speed, 0.0)
+        
         assert self.current_speed >= 0.0, "Speed is negative!, it is {}".format(self.current_speed)
         
         # publish the action to ackerman drive
@@ -442,9 +456,10 @@ class AgentRollout(Node):
             time_infos["lidar_timestamp"] = timestamp_lidar_float
             time_infos["pose_timestamp"] = pose_stamp_float
             time_infos["action_timestamp"] = timestamp.sec + timestamp.nanosec * 1e-9
+            #time_infos["imu"] = self.current_imu 
             #print("action, timestamp", )
             done = terminate
-            if False:
+            if True:
                 # print(model_name)
                 with open(f"dataset/{model_name}", 'ab') as f:
                     collision=terminate
@@ -482,7 +497,7 @@ class AgentRollout(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    config_file_path = "/sim_ws/src/ros_ftg_agent/config/config.json"  # Update with the actual path
+    config_file_path = "/home/rindt/racecar_ws/src/f110_ros_wrapper/config/config.json"  # Update with the actual path
     with open(config_file_path, 'r') as config_file:
         config = json.load(config_file)
 
