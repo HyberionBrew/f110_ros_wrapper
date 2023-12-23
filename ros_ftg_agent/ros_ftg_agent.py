@@ -23,6 +23,7 @@ from geometry_msgs.msg import Point
 import json
 # import ros imu message vesc_msgs
 from vesc_msgs.msg import VescImuStamped
+from sensor_msgs.msg import Joy
 
 class Raceline():
     def __init__(self):
@@ -78,11 +79,18 @@ class AgentRollout(Node):
         self.agent = agent
         self.reset_agent = reset_agent
         self.state = "resetting"
-        
+        self.terminate = False
 
         self.current_speed = 0.0
         self.current_angle = 0.0
         self.ackermann_pub = self.create_publisher(AckermannDriveStamped, 'drive', 10)
+        self.subscription = self.create_subscription(
+            Joy,
+            'joy',  # Replace with your topic name
+            self.joy_callback,
+            10  # Queue size
+        )
+
         print("Running agent")
         self.TRUNCATION_TIMESTEP = 250
         self.trajectory_num = 0
@@ -97,6 +105,24 @@ class AgentRollout(Node):
         self.num_starting_points = num_starting_points
         self.starting_points_progress = np.linspace(0, 1, self.num_starting_points + 1)[1:] 
         self.target_start = None
+
+
+    
+    def joy_callback(self, msg):
+        # Check if button 6 (index 5) is pressed
+        self.terminate = False
+        if len(msg.buttons) > 4 and msg.buttons[4] == 1:
+            self.get_logger().info('Button 4 is pressed')
+            self.current_speed = 0.0
+            self.current_angle = 0.0
+            self.terminate = True
+        if len(msg.buttons)>5 and msg.buttons[5] == 1:
+            self.running = True
+        else:
+            self.current_angle =0.0
+            self.current_speed = 0.0
+
+
 
     def publish_state_marker(self):
         marker = Marker()
@@ -203,7 +229,7 @@ class AgentRollout(Node):
         self.drop_curr_pose = 0
         self.drop_curr_pose += 1
 
-
+    
     def get_imu(self, msg):
         self.current_imu = msg
 
@@ -268,7 +294,7 @@ class AgentRollout(Node):
         if self.initial == True:
             self.progress.reset(np.array([x, y]))
             self.initial = False
-        
+        self.get_logger().info(f"{self.state}")
         #########################################
         ### Create the observation dictionary ###
         #########################################
@@ -329,20 +355,22 @@ class AgentRollout(Node):
         # self.state = "recording"
         ######## HANDLE ACTION ########
         # A bit of a mess with all the global variables - ups 
+        #self.state = "recording"
         if self.timestep % 20 == 0:
             self.get_logger().info(f"current progress {new_progress}")
         
         
         if self.state == "resetting":
+            
             info, action, log_prob = self.reset_agent(obs, deaccelerate=self.deaccelerate)
-            waypoint = info[0]
+            waypoint = info[0] % len(self.track.centerline.xs)
             xx = float(self.track.centerline.xs[waypoint])
             yy = float(self.track.centerline.ys[waypoint])
             self.get_logger().info(f"{xx} {yy}")
             self.publish_waypoint(xx,yy)
             
             if self.target_start is None:
-                print()
+                
                 self.get_logger().info(f"Available starting points {self.starting_points_progress}")
                 self.target_start, self.starting_points_progress = self.find_and_remove_closest(self.starting_points_progress,new_progress, wrap_around=0.2)
                 self.get_logger().info(f"picked starting point {self.target_start}")
@@ -397,8 +425,9 @@ class AgentRollout(Node):
             #    self.trajectory_num += 1
         
         if self.state=="recording":
-            _ , action, log_prob = self.agent(obs, timestep=np.array([self.timestep]))
-
+            values , action, log_prob = self.agent(obs, timestep=np.array([self.timestep]))
+            #self.get_logger().info(f"[delta_angles, target_angles, current_angles]: {values}")
+            
         elif self.state == "crash_imminent":
             print("crash iminent!!")
             self.current_speed = 0.0
@@ -406,11 +435,11 @@ class AgentRollout(Node):
             action = np.array([[0.0, 0.0]])
             log_prob = np.array([[0.0, 0.0]])
 
-        assert (action<=1.0).all() 
-        assert (action>=-1.0).all()
+        #assert (action<=1.0).all() 
+        #assert (action>=-1.0).all()
         #print(action)
         action_out = action.copy()
-        action = action[0] * 0.05 # hardcoded scaling, TODO!
+        action = action[0] *0.3 #* 0.15 # hardcoded scaling, TODO!
         
         
         self.current_angle += action[0]
@@ -468,7 +497,7 @@ class AgentRollout(Node):
                 with open(f"dataset/{model_name}", 'ab') as f:
                     collision=terminate
                     pkl.dump((action_out, obs, 0.0,
-                            done,
+                            self.terminate,
                             truncated,
                             log_prob,
                             self.timestep,
@@ -501,7 +530,7 @@ class AgentRollout(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    config_file_path = "/home/rindt/racecar_ws/src/f110_ros_wrapper/config/config.json"  # Update with the actual path
+    config_file_path = "/home/rindt/racecar_ws/src/f110_ros_wrapper/config/config_fallstudien.json" #"/home/rindt/racecar_ws/src/f110_ros_wrapper/config/config.json"  # Update with the actual path
     with open(config_file_path, 'r') as config_file:
         config = json.load(config_file)
 
