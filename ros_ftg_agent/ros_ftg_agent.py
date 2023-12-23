@@ -318,15 +318,11 @@ class AgentRollout(Node):
         #print(obs['lidar_occupancy'].shape)
         assert obs['lidar_occupancy'].shape == (1, 1080//self.agent.subsample)
         
-        # self.state = "resetting"
+        # self.state = "recording"
         ######## HANDLE ACTION ########
         # A bit of a mess with all the global variables - ups 
         self.get_logger().info(f"current progress {new_progress}")
         if self.state == "resetting":
-            
-            self.current_speed = 0.0
-            self.current_angle = 0.0
-
             info, action, log_prob = self.reset_agent(obs, deaccelerate=self.deaccelerate)
             waypoint = info[0]
             xx = float(self.track.centerline.xs[waypoint])
@@ -340,7 +336,7 @@ class AgentRollout(Node):
                 self.target_start, self.starting_points_progress = self.find_and_remove_closest(self.starting_points_progress,new_progress, wrap_around=0.2)
                 self.get_logger().info(f"picked starting point {self.target_start}")
                 # transform target start to a index in the track
-                start_index = int(self.target_start * len(self.track.centerline.xs))
+                start_index = int(self.target_start * len(self.track.centerline.xs))%len(self.track.centerline.xs)
                 s_x = float(self.track.centerline.xs[start_index])
                 s_y = float(self.track.centerline.ys[start_index])
                 self.publish_start_point(s_x, s_y)
@@ -355,6 +351,8 @@ class AgentRollout(Node):
                     self.deaccelerate = True
                     # start timer to wait for one second, after which we swap to recording
                     self.timestep = 0
+                    self.current_speed = 0.0
+                    self.current_angle = 0.0
                     #self.deaccelerate_timer = self.timestep
                 if self.deaccelerate and self.timestep > 20:
                     self.deaccelerate = False
@@ -364,6 +362,8 @@ class AgentRollout(Node):
                     self.timestep = 0
                     self.trajectory_num += 1
                     self.target_start = None
+                    self.current_speed = 0.0
+                    self.current_angle = 0.0
                     #if self.trajectory_num == 100:
                     #    exit()
                 #if self.deaccelerate:
@@ -401,8 +401,11 @@ class AgentRollout(Node):
         action_out = action.copy()
         action = action[0] * 0.05 # hardcoded scaling, TODO!
         
-        self.current_speed += action[1]
+        
         self.current_angle += action[0]
+        self.current_speed += action[1]
+        
+        self.current_speed = np.clip(self.current_speed, 0.0, 2.0)
         assert self.current_speed >= 0.0, "Speed is negative!, it is {}".format(self.current_speed)
         
         # publish the action to ackerman drive
