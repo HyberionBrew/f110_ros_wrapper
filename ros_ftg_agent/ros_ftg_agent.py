@@ -323,6 +323,10 @@ class AgentRollout(Node):
         # A bit of a mess with all the global variables - ups 
         self.get_logger().info(f"current progress {new_progress}")
         if self.state == "resetting":
+            
+            self.current_speed = 0.0
+            self.current_angle = 0.0
+
             info, action, log_prob = self.reset_agent(obs, deaccelerate=self.deaccelerate)
             waypoint = info[0]
             xx = float(self.track.centerline.xs[waypoint])
