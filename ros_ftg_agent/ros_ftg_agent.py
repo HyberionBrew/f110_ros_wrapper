@@ -24,7 +24,7 @@ import json
 # import ros imu message vesc_msgs
 # from vesc_msgs.msg import VescImuStamped
 from sensor_msgs.msg import Joy
-
+from sensor_msgs.msg import Imu
 class Raceline():
     def __init__(self):
         self.xs = []
@@ -73,13 +73,14 @@ class AgentRollout(Node):
         self.marker_publisher = self.create_publisher(Marker, 'visualization_marker', 10)
         self.waypoint_publisher = self.create_publisher(Marker, 'waypoint_marker', 10)
         self.start_publisher = self.create_publisher(Marker, 'start_marker', 10)
-        #self.imu_subscriber = self.create_subscription(VescImuStamped, 'sensors/imu', self.get_imu, 10)
+        self.imu_subscriber = self.create_subscription(Imu, 'phidgets/imu/data_raw', self.get_imu, 10)
         timer_period = 1/20  # seconds (20 Hz)
         self.timer = self.create_timer(timer_period, self.execute_agent)
         self.agent = agent
         self.reset_agent = reset_agent
         self.state = "inital"
         self.terminate = False
+
 
         self.current_speed = 0.0
         self.current_angle = 0.0
@@ -110,17 +111,17 @@ class AgentRollout(Node):
     
     def joy_callback(self, msg):
         # Check if button 6 (index 5) is pressed
-        self.terminate = False
-        if len(msg.buttons) > 4 and msg.buttons[4] == 1:
-            self.get_logger().info('Button 4 is pressed')
-            self.current_speed = 0.0
-            self.current_angle = 0.0
-            self.terminate = True
+        self.terminate = True
+        if len(msg.buttons) > 5 and msg.buttons[5] == 1:
+            # self.get_logger().info('Button 5 is pressed')
+            self.terminate = False
         if len(msg.buttons)>5 and msg.buttons[5] == 1:
             self.running = True
         else:
             self.current_angle =0.0
             self.current_speed = 0.0
+        if self.terminate and self.state=="recording":
+            self.get_logger().info('Terminating trajectory')
 
 
 
@@ -233,7 +234,10 @@ class AgentRollout(Node):
 
     
     def get_imu(self, msg):
-        self.current_imu = msg
+        #self.get_logger().info("getting imu pose")
+        if self.current_imu is None:
+            self.current_imu = []
+        self.current_imu.append(msg)
 
     def detect_collision(self):
         pass
@@ -327,7 +331,7 @@ class AgentRollout(Node):
         # print("Pose", x, y)
         #self.get_logger().info(f"Pose {x} {y}")
         new_progress = self.progress.get_progress(np.array([[x, y]]))
-        self.get_logger().info(f"progress {new_progress}")
+        #self.get_logger().info(f"progress {new_progress}")
         # print("new progress", new_progress)
         obs['progress_sin'] = np.array(np.sin(new_progress*2 * np.pi),dtype=np.float32)
         obs['progress_cos'] = np.array(np.cos(new_progress*2 * np.pi),dtype=np.float32)
@@ -347,9 +351,10 @@ class AgentRollout(Node):
         # print(self.current_pose)
         
         # print(self.current_lidar_occupancy)
-        if self.current_pose is None or self.current_lidar_occupancy is None:# or self.current_imu is None:
+        if self.current_pose is None or self.current_lidar_occupancy is None or self.current_imu is None:
             #print("waiting for pose and lidar data")
-            self.get_logger().info("waiting for pose and lidar data")
+            self.get_logger().info(f"waiting for pose, lidar data and imu {self.current_pose is None}, {self.current_lidar_occupancy is None}, {self.current_imu is None}")
+            
             return
         
         if self.state == "inital":
@@ -363,7 +368,7 @@ class AgentRollout(Node):
             self.state = "resetting"
 
 
-        self.get_logger().info(f"{self.state}")
+        # self.get_logger().info(f"{self.state}")
         #########################################
         ### Create the observation dictionary ###
         #########################################
@@ -378,8 +383,6 @@ class AgentRollout(Node):
         if self.state == "resetting":
             
             info, action, log_prob = self.reset_agent(obs, deaccelerate=False)#self.deaccelerate)
-            print(action.shape)
-            print(log_prob.shape)
             waypoint = info[0] % len(self.track.centerline.xs)
             waypoint_debug_x = float(self.track.centerline.xs[waypoint])
             waypoint_debug_y = float(self.track.centerline.ys[waypoint])
@@ -437,6 +440,10 @@ class AgentRollout(Node):
         
         self.current_angle += action[0]
         self.current_speed += action[1]
+        if self.terminate:
+            self.current_angle = 0.0
+            self.current_speed = 0.0
+        #self.get_logger().info()
         #print(action[1])
         self.get_logger().info(f"current speed {self.current_speed}: {action[1]}")
         self.current_speed = np.clip(self.current_speed, 0.0, 7.0)
@@ -469,10 +476,29 @@ class AgentRollout(Node):
             time_infos["lidar_timestamp"] = timestamp_lidar_float
             time_infos["pose_timestamp"] = pose_stamp_float
             time_infos["action_timestamp"] = timestamp.sec + timestamp.nanosec * 1e-9
+            imu_data = dict()
+            imu_data["lin_vel_x"] = []
+            imu_data["lin_vel_y"] = []
+            imu_data["lin_vel_z"] = []
+            imu_data["ang_vel_x"] = []
+            imu_data["ang_vel_y"] = []
+            imu_data["ang_vel_z"] = []
+            imu_data["timestamp"] = []
+            for msg_imu in self.current_imu:
+                imu_data["lin_vel_x"].append(msg_imu.linear_acceleration.x)
+                imu_data["lin_vel_y"].append(msg_imu.linear_acceleration.y)
+                imu_data["lin_vel_z"].append(msg_imu.linear_acceleration.z)
+                imu_data["ang_vel_x"].append(msg_imu.angular_velocity.x)
+                imu_data["ang_vel_y"].append(msg_imu.angular_velocity.y)
+                imu_data["ang_vel_z"].append(msg_imu.angular_velocity.z)
+                imu_data["timestamp"].append(msg_imu.header.stamp.sec + msg_imu.header.stamp.nanosec * 1e-9)
+            
             #time_infos["imu"] = self.current_imu 
             #print("action, timestamp", )
             if True:
                 # print(model_name)
+                self.get_logger().info(f"Imu data length {len(imu_data['timestamp'])}")
+                self.get_logger().info(f"terminate {self.terminate}")
                 with open(f"dataset/{model_name}", 'ab') as f:
                     collision=self.terminate
                     # if terminate log info
@@ -487,10 +513,12 @@ class AgentRollout(Node):
                             model_name,
                             collision,
                             action_raw, 
-                            time_infos), f)
+                            time_infos,
+                            imu_data), f)
         if truncated:
             self.state = "resetting"
-
+        
+        self.current_imu = [] # clear the imu
         self.timestep += 1
         self.publish_state_marker()
 
@@ -499,6 +527,7 @@ class AgentRollout(Node):
         # convert to numpy array
         # save scans, timestamp
         #print("begore", msg.ranges)
+        #self.get_logger().info("Getting laserscan")
         self.current_lidar_occupancy = (np.array(msg.ranges, dtype=np.float32), msg.header.stamp)
         self.lidar_angle_increment = msg.angle_increment 
         self.lidar_angle_min = msg.angle_min
@@ -510,7 +539,7 @@ class AgentRollout(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    config_file_path = "/sim_ws/src/f1tenth_gym_ros/config2/config_fallstudien.json" #"/home/rindt/racecar_ws/src/f110_ros_wrapper/config/config.json"  # Update with the actual path
+    config_file_path = "/home/rindt/racecar_ws/src/f110_ros_wrapper/config/config_fallstudien.json" #"/sim_ws/src/f1tenth_gym_ros/config2/config_fallstudien.json" #"/home/rindt/racecar_ws/src/f110_ros_wrapper/config/config.json"  # Update with the actual path
     with open(config_file_path, 'r') as config_file:
         config = json.load(config_file)
 
