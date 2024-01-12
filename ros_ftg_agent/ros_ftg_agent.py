@@ -22,7 +22,7 @@ from std_msgs.msg import ColorRGBA
 from geometry_msgs.msg import Point
 import json
 # import ros imu message vesc_msgs
-from vesc_msgs.msg import VescImuStamped
+# from vesc_msgs.msg import VescImuStamped
 from sensor_msgs.msg import Joy
 
 class Raceline():
@@ -73,12 +73,12 @@ class AgentRollout(Node):
         self.marker_publisher = self.create_publisher(Marker, 'visualization_marker', 10)
         self.waypoint_publisher = self.create_publisher(Marker, 'waypoint_marker', 10)
         self.start_publisher = self.create_publisher(Marker, 'start_marker', 10)
-        self.imu_subscriber = self.create_subscription(VescImuStamped, 'sensors/imu', self.get_imu, 10)
+        #self.imu_subscriber = self.create_subscription(VescImuStamped, 'sensors/imu', self.get_imu, 10)
         timer_period = 1/20  # seconds (20 Hz)
         self.timer = self.create_timer(timer_period, self.execute_agent)
         self.agent = agent
         self.reset_agent = reset_agent
-        self.state = "resetting"
+        self.state = "inital"
         self.terminate = False
 
         self.current_speed = 0.0
@@ -105,7 +105,7 @@ class AgentRollout(Node):
         self.num_starting_points = num_starting_points
         self.starting_points_progress = np.linspace(0, 1, self.num_starting_points + 1)[1:] 
         self.target_start = None
-
+        self.i = 0
 
     
     def joy_callback(self, msg):
@@ -136,11 +136,13 @@ class AgentRollout(Node):
 
         # Set the color based on self.state
         if self.state == "recording":
+            marker.color = ColorRGBA(r=0.0, g=0.0, b=1.0, a=1.0)  # Blue
+        elif self.state == "reset":
             marker.color = ColorRGBA(r=0.0, g=1.0, b=0.0, a=1.0)  # Green
-        elif self.state == "crash_imminent":
-            marker.color = ColorRGBA(r=1.0, g=0.0, b=0.0, a=1.0)  # Red
-        elif self.state == "resetting":
+        elif self.state =="decelerate":
             marker.color = ColorRGBA(r=1.0, g=0.647, b=0.0, a=1.0)  # Orange
+        elif self.state == "resetting":
+            marker.color = ColorRGBA(r=1.0, g=0.5, b=0.0, a=0.5) # Other Orange 
 
         # Publish the marker
         self.marker_publisher.publish(marker)
@@ -284,21 +286,8 @@ class AgentRollout(Node):
         #if array.size == 0:
         #    array = np.linspace(0, 1, num=10)  # Assuming original linspace parameters
         return closest_value, array
-
-    def execute_agent(self):
-        if self.current_pose is None or self.current_lidar_occupancy is None or self.current_imu is None:
-            #print("waiting for pose and lidar data")
-            self.get_logger().info("waiting for pose and lidar data")
-            return
-        
-        if self.initial == True:
-            self.progress.reset(np.array([x, y]))
-            self.initial = False
-        self.get_logger().info(f"{self.state}")
-        #########################################
-        ### Create the observation dictionary ###
-        #########################################
-
+    
+    def assemble_obs_dict(self):
         ######## HANDLE LIDAR DATA ########
 
         lidar_data, timestamp_lidar = self.current_lidar_occupancy
@@ -338,11 +327,12 @@ class AgentRollout(Node):
         # print("Pose", x, y)
         #self.get_logger().info(f"Pose {x} {y}")
         new_progress = self.progress.get_progress(np.array([[x, y]]))
-        #self.get_logger().info(f"progress {self.progress.previous_closest_idx}")
+        self.get_logger().info(f"progress {new_progress}")
         # print("new progress", new_progress)
-        obs['progress_sin'] = np.array(np.sin(new_progress),dtype=np.float32)
-        obs['progress_cos'] = np.array(np.cos(new_progress),dtype=np.float32)
-        obs['previous_action'] = np.array([[self.current_angle, self.current_speed]])
+        obs['progress_sin'] = np.array(np.sin(new_progress*2 * np.pi),dtype=np.float32)
+        obs['progress_cos'] = np.array(np.cos(new_progress*2 * np.pi),dtype=np.float32)
+        obs['previous_action_steer'] = np.array([self.current_angle],dtype=np.float32)
+        obs['previous_action_speed'] = np.array([self.current_speed],dtype=np.float32)
         # add to all obs one dimension at 0
         #for key in obs.keys():
         #    obs[key] = np.expand_dims(obs[key], axis=0)
@@ -351,26 +341,52 @@ class AgentRollout(Node):
         #print(obs['lidar_occupancy'])
         #print(obs['lidar_occupancy'].shape)
         assert obs['lidar_occupancy'].shape == (1, 1080//self.agent.subsample)
+        return obs , new_progress, timestamp_lidar, pose_data
+
+    def execute_agent(self):
+        # print(self.current_pose)
+        
+        # print(self.current_lidar_occupancy)
+        if self.current_pose is None or self.current_lidar_occupancy is None:# or self.current_imu is None:
+            #print("waiting for pose and lidar data")
+            self.get_logger().info("waiting for pose and lidar data")
+            return
+        
+        if self.state == "inital":
+            pose_data = self.current_pose
+            x = pose_data.pose.pose.position.x
+            y = pose_data.pose.pose.position.y
+            self.progress.reset(np.array([x, y]))
+            self.initial = False
+            self.current_angle = 0.0
+            self.current_speed = 0.0
+            self.state = "resetting"
+
+
+        self.get_logger().info(f"{self.state}")
+        #########################################
+        ### Create the observation dictionary ###
+        #########################################
+        obs, new_progress, timestamp_lidar, pose_data = self.assemble_obs_dict()
         
         # self.state = "recording"
         ######## HANDLE ACTION ########
         # A bit of a mess with all the global variables - ups 
         #self.state = "recording"
-        if self.timestep % 20 == 0:
-            self.get_logger().info(f"current progress {new_progress}")
-        
-        
+        #if self.timestep % 20 == 0:
+        #    self.get_logger().info(f"current progress {new_progress}")
         if self.state == "resetting":
             
-            info, action, log_prob = self.reset_agent(obs, deaccelerate=self.deaccelerate)
+            info, action, log_prob = self.reset_agent(obs, deaccelerate=False)#self.deaccelerate)
+            print(action.shape)
+            print(log_prob.shape)
             waypoint = info[0] % len(self.track.centerline.xs)
-            xx = float(self.track.centerline.xs[waypoint])
-            yy = float(self.track.centerline.ys[waypoint])
-            self.get_logger().info(f"{xx} {yy}")
-            self.publish_waypoint(xx,yy)
+            waypoint_debug_x = float(self.track.centerline.xs[waypoint])
+            waypoint_debug_y = float(self.track.centerline.ys[waypoint])
+            self.publish_waypoint(waypoint_debug_x,waypoint_debug_y)
             
             if self.target_start is None:
-                
+                # compute the target start
                 self.get_logger().info(f"Available starting points {self.starting_points_progress}")
                 self.target_start, self.starting_points_progress = self.find_and_remove_closest(self.starting_points_progress,new_progress, wrap_around=0.2)
                 self.get_logger().info(f"picked starting point {self.target_start}")
@@ -380,73 +396,51 @@ class AgentRollout(Node):
                 s_y = float(self.track.centerline.ys[start_index])
                 self.publish_start_point(s_x, s_y)
 
-
                 if self.starting_points_progress.size == 0:
+                    # reshuffle and start from the begining
                     self.starting_points_progress = np.linspace(0, 1, self.num_starting_points + 1)[1:] 
-                #print("remaining", self.starting_points_progress)
             # if we are within 0.05 of the target start, set deaccelerate to true
-            else:
-                if (abs(self.target_start - new_progress) < 0.05) and not self.deaccelerate:
-                    self.deaccelerate = True
-                    # start timer to wait for one second, after which we swap to recording
-                    self.timestep = 0
-                    self.current_speed = 0.0
-                    self.current_angle = 0.0
-                    #self.deaccelerate_timer = self.timestep
-                if self.deaccelerate and self.timestep > 20:
-                    self.deaccelerate = False
-                    self.state = "recording"
-                    self.get_logger().info(f"Recording trajectory: {self.trajectory_num}")
-                    #print(f"Recording trajectory: {self.trajectory_num}")
-                    self.timestep = 0
-                    self.trajectory_num += 1
-                    self.target_start = None
-                    self.current_speed = 0.0
-                    self.current_angle = 0.0
-                    #if self.trajectory_num == 100:
-                    #    exit()
-                #if self.deaccelerate:
-                    #print("waiting",self.timestep)
-                    #print(action)
-            #print(curr_progress)
-            #print("vs")
-            #if self.timestep % 30 == 0:
-            #    print(new_progress, self.target_start, )
-            # select next starting point
-            
-            #print("..........")
-            #print(self.current_speed)
-            #print(reset_almost_done)
-            #if obs['linear_vels_x'][0] < 0.05:
+            if (abs(self.target_start - new_progress) < 0.05):
+                self.state = "decelerate"
+                self.timestep = 0
+                info, action, log_prob = self.reset_agent(obs, deaccelerate=True)
 
-            #    self.state = "recording"
-            #    print(f"Recording trajectory: {self.trajectory_num}")
-            #    self.timestep = 0
-            #    self.trajectory_num += 1
-        
-        if self.state=="recording":
-            values , action, log_prob = self.agent(obs, timestep=np.array([self.timestep]))
-            #self.get_logger().info(f"[delta_angles, target_angles, current_angles]: {values}")
-            
-        elif self.state == "crash_imminent":
-            print("crash iminent!!")
+        elif self.state == "decelerate":
+            info, action, log_prob = self.reset_agent(obs, deaccelerate=True)
+            # decelerate for one second
+            if self.timestep > 20:
+                self.state = "reset"
+                self.timestep = 0
+
+        elif self.state == "reset":
+            # remain stationary for one second
             self.current_speed = 0.0
             self.current_angle = 0.0
             action = np.array([[0.0, 0.0]])
-            log_prob = np.array([[0.0, 0.0]])
+            log_prob = np.array([0.0])
+            if self.timestep > 20:
+                self.timestep = 0
+                self.target_start = None
+                self.state = "recording"
+                self.trajectory_num += 1
+                self.get_logger().info(f"Recording trajectory: {self.trajectory_num}")
 
-        #assert (action<=1.0).all() 
-        #assert (action>=-1.0).all()
-        #print(action)
+        # Immediately start, dont wait until the next timestep
+        if self.state =="recording":
+            values, action, log_prob = self.agent(obs, timestep=np.array([self.timestep]))
+            #self.get_logger().info(f"[delta_angles, target_angles, current_angles]: {values}")
+        
+        
         action_out = action.copy()
-        action = action[0] *0.3 #* 0.15 # hardcoded scaling, TODO!
+        action = action[0] #* 0.15 # hardcoded scaling, TODO!
         
         
         self.current_angle += action[0]
         self.current_speed += action[1]
-        
-        self.current_speed = np.clip(self.current_speed, 0.0, 2.0)
-        assert self.current_speed >= 0.0, "Speed is negative!, it is {}".format(self.current_speed)
+        #print(action[1])
+        self.get_logger().info(f"current speed {self.current_speed}: {action[1]}")
+        self.current_speed = np.clip(self.current_speed, 0.0, 7.0)
+        # assert self.current_speed >= 0.0, "Speed is negative!, it is {}".format(self.current_speed)
         
         # publish the action to ackerman drive
         ackermann_command = AckermannDriveStamped()
@@ -456,33 +450,19 @@ class AgentRollout(Node):
         ackerman_drive.speed = self.current_speed
         ackerman_drive.steering_angle = self.current_angle
         ackermann_command.drive = ackerman_drive
-        self.ackermann_pub.publish(ackermann_command)
-        # check if we will be crashing soon
-        terminate = False #self.should_stop(self.current_lidar_occupancy[0], 
-        #          obs['linear_vels_x'][0])
-        
-        if terminate == True:
-            pass
-            #self.state = "crash_imminent"
-        
+        self.ackermann_pub.publish(ackermann_command)        
         # now lets save all the stuff
         truncated = False
 
-        if self.state=="recording":
+        if self.state== "recording":
             
             action_raw = np.array([[self.current_angle, self.current_speed]])
             model_name = str(self.agent)
             # add the timestap of the lidar and of the pose to the obs
             timestamp_lidar_float = timestamp_lidar.sec + timestamp_lidar.nanosec * 1e-9
             pose_stamp_float = pose_data.header.stamp.sec + pose_data.header.stamp.nanosec * 1e-9
-            #obs['lidar_timestamp'] = np.array([timestamp_lidar_float],dtype=np.float32)
-            #obs['pose_timestamp'] = np.array([pose_stamp_float],dtype=np.float32)
-            
-            #if self.timestep % 20 == 0:
-            #    print("Timestep", self.timestep)
-            
-            # self.timestep == 1000
-            truncated = self.timestep >= self.TRUNCATION_TIMESTEP - 1
+
+            truncated = self.timestep >= self.TRUNCATION_TIMESTEP
             # terminate = False # TODO listen to termination topic
 
             time_infos = {}
@@ -491,11 +471,14 @@ class AgentRollout(Node):
             time_infos["action_timestamp"] = timestamp.sec + timestamp.nanosec * 1e-9
             #time_infos["imu"] = self.current_imu 
             #print("action, timestamp", )
-            done = terminate
             if True:
                 # print(model_name)
                 with open(f"dataset/{model_name}", 'ab') as f:
-                    collision=terminate
+                    collision=self.terminate
+                    # if terminate log info
+                    if self.terminate:
+                        self.get_logger().info(f"Terminated trajectory: {self.trajectory_num}")
+                    
                     pkl.dump((action_out, obs, 0.0,
                             self.terminate,
                             truncated,
@@ -505,12 +488,9 @@ class AgentRollout(Node):
                             collision,
                             action_raw, 
                             time_infos), f)
-        if truncated or terminate:
-            #self.state = "resetting"
-            if terminate:
-                self.state = "crash_imminent"
-            else:
-                self.state = "resetting"
+        if truncated:
+            self.state = "resetting"
+
         self.timestep += 1
         self.publish_state_marker()
 
@@ -530,7 +510,7 @@ class AgentRollout(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    config_file_path = "/home/rindt/racecar_ws/src/f110_ros_wrapper/config/config_fallstudien.json" #"/home/rindt/racecar_ws/src/f110_ros_wrapper/config/config.json"  # Update with the actual path
+    config_file_path = "/sim_ws/src/f1tenth_gym_ros/config2/config_fallstudien.json" #"/home/rindt/racecar_ws/src/f110_ros_wrapper/config/config.json"  # Update with the actual path
     with open(config_file_path, 'r') as config_file:
         config = json.load(config_file)
 
