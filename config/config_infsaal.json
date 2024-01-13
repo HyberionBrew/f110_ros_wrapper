@@ -1,0 +1,6 @@
+{
+    "reward_config_path": "/home/rindt/racecar_ws/src/f110_ros_wrapper/config/reward_configs/progress.json",
+    "agent_config_path": "/home/rindt/racecar_ws/src/f110_ros_wrapper/config/agent_configs/pp_agent_2_0.8_1.0_0.6.json",
+    "reset_agent_path": "/home/rindt/racecar_ws/src/f110_ros_wrapper/config/agent_configs/reset_agent.json",
+    "track_path": "/home/rindt/racecar_ws/src/f110_ros_wrapper/config/agent_configs/raceline.csv"
+}

@@ -1,0 +1,13 @@
+{
+    "agent_class": "FTGAgent",
+    "agent_parameters": {
+        "speed_multiplier": 1.0,
+        "gap_blocker": 5,
+        "deterministic": false,
+        "std_steer": 0.15,
+        "std_vel" : 0.15,
+        "max_delta": 0.3,
+        "max_speed" : 5.0,
+        "min_speed": 0.0
+    }
+}

@@ -1,0 +1,6 @@
+{
+    "reward_config_path": "/home/rindt/racecar_ws/src/f110_ros_wrapper/config/reward_configs/progress.json",
+    "agent_config_path": "/home/rindt/racecar_ws/src/f110_ros_wrapper/config/agent_configs/ftg_ultra_5.json",
+    "reset_agent_path": "/home/rindt/racecar_ws/src/f110_ros_wrapper/config/agent_configs/reset_agent_fallstudien.json",
+    "track_path": "/home/rindt/racecar_ws/src/particle_filter/maps/2112fallstudienlabor_mintime_3.0_3.0_3.0_rl.csv"
+}

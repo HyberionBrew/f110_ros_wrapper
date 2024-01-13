@@ -3,7 +3,10 @@
     "agent_parameters": {
         "deterministic": true,
         "raceline_file": "/home/rindt/racecar_ws/src/f110_ros_wrapper/config/agent_configs/raceline.csv",
-        "fixed_speed": 0.9,
-        "resetting": true
+        "resetting": false,
+        "speed_multiplier": 1.0,
+        "lookahead_distance": 0.7,
+        "max_delta":0.3,
+        "max_speed":5.0
     }
 }

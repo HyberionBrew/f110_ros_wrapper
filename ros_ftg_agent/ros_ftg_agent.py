@@ -92,7 +92,7 @@ class AgentRollout(Node):
             10  # Queue size
         )
 
-        print("Running agent")
+        # print("Running agent")
         self.TRUNCATION_TIMESTEP = 250
         self.trajectory_num = 0
         
@@ -181,7 +181,7 @@ class AgentRollout(Node):
 
     def inital_pose_callback(self, msg):
         # reset the agent
-        print("Resetting agent")
+        # print("Resetting agent")
         self.agent.reset()
         self.get_logger().info("resetting pose")
         self.get_logger().info(f"Pose {msg.pose.pose.position.x} {msg.pose.pose.position.y}")
@@ -445,7 +445,7 @@ class AgentRollout(Node):
             self.current_speed = 0.0
         #self.get_logger().info()
         #print(action[1])
-        self.get_logger().info(f"current speed {self.current_speed}: {action[1]}")
+        #self.get_logger().info(f"current speed {self.current_speed}: {action[1]}")
         self.current_speed = np.clip(self.current_speed, 0.0, 7.0)
         # assert self.current_speed >= 0.0, "Speed is negative!, it is {}".format(self.current_speed)
         
@@ -497,8 +497,8 @@ class AgentRollout(Node):
             #print("action, timestamp", )
             if True:
                 # print(model_name)
-                self.get_logger().info(f"Imu data length {len(imu_data['timestamp'])}")
-                self.get_logger().info(f"terminate {self.terminate}")
+                #self.get_logger().info(f"Imu data length {len(imu_data['timestamp'])}")
+                #self.get_logger().info(f"terminate {self.terminate}")
                 with open(f"dataset/{model_name}", 'ab') as f:
                     collision=self.terminate
                     # if terminate log info
@@ -539,7 +539,7 @@ class AgentRollout(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    config_file_path = "/home/rindt/racecar_ws/src/f110_ros_wrapper/config/config_fallstudien.json" #"/sim_ws/src/f1tenth_gym_ros/config2/config_fallstudien.json" #"/home/rindt/racecar_ws/src/f110_ros_wrapper/config/config.json"  # Update with the actual path
+    config_file_path = "/home/rindt/racecar_ws/src/f110_ros_wrapper/config/config_infsaal.json" #"/sim_ws/src/f1tenth_gym_ros/config2/config_fallstudien.json" #"/home/rindt/racecar_ws/src/f110_ros_wrapper/config/config.json"  # Update with the actual path
     with open(config_file_path, 'r') as config_file:
         config = json.load(config_file)
 
@@ -547,6 +547,7 @@ def main(args=None):
     reward_config_path = config["reward_config_path"]
     agent_config_path = config["agent_config_path"]
     reset_agent_path = config["reset_agent_path"]
+    
     track_path = config["track_path"]
     # "/sim_ws/src/agent_configs/ftg_fast_5.json"
     reward_config = RewardConfig(reward_config_path) 
@@ -555,7 +556,7 @@ def main(args=None):
     #reset_agent_path = "/sim_ws/src/agent_configs/reset_agent.json" 
     reset_agent = agents.load(reset_agent_path)
 
-    rolloutNode = AgentRollout(agent, reset_agent, track_path)
+    rolloutNode = AgentRollout(agent, reset_agent, track_path, num_starting_points=10)
     try:
         rolloutNode.run()
     except KeyboardInterrupt:

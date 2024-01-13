@@ -1,0 +1,9 @@
+{
+    "agent_class": "PPAgent",
+    "agent_parameters": {
+        "deterministic": true,
+        "raceline_file": "home/rindt/racecar_ws/src/f110_ros_wrapper/config/agent_configs/raceline.csv",
+        "fixed_speed": 0.5,
+        "resetting": true
+    }
+}

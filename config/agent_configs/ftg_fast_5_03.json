@@ -1,0 +1,10 @@
+{
+    "agent_class": "FTGAgent",
+    "agent_parameters": {
+        "speed_multiplier": 0.5,
+        "gap_blocker": 5,
+        "deterministic": false,
+        "std": 0.3,
+        "max_delta": 0.3
+    }
+}

@@ -1,0 +1,12 @@
+{
+    "agent_class": "PPAgent",
+    "agent_parameters": {
+        "deterministic": true,
+        "raceline_file": "/home/rindt/racecar_ws/src/f110_ros_wrapper/config/agent_configs/raceline_og.csv",
+        "resetting": false,
+        "speed_multiplier": 0.75,
+        "lookahead_distance": 0.9,
+        "max_delta":0.3,
+        "max_speed":5.0
+    }
+}
