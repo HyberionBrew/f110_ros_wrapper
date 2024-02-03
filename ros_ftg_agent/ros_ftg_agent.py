@@ -25,6 +25,34 @@ import json
 # from vesc_msgs.msg import VescImuStamped
 from sensor_msgs.msg import Joy
 from sensor_msgs.msg import Imu
+
+class FakeIMU: # simple for simulation
+    def __init__(self):
+        self.linear_acceleration = self.Acceleration()
+        self.angular_velocity = self.Velocity()
+        self.header = self.Header()
+        
+    class Acceleration:
+        x = 0
+        y = 0
+        z = 0
+        
+    class Velocity:
+        x = 0
+        y = 0
+        z = 0
+        
+    class Header:
+        def __init__(self):
+            self.stamp = self.Stamp()
+            
+        class Stamp:
+            sec = 0
+            nanosec = 0
+            
+    def generate_timestamp(self):
+        return self.header.stamp.sec + self.header.stamp.nanosec * 1e-9
+
 class Raceline():
     def __init__(self):
         self.xs = []
@@ -96,7 +124,7 @@ class AgentRollout(Node):
         self.TRUNCATION_TIMESTEP = 250
         self.trajectory_num = 0
         
-        self.ttc_min = 0.1
+
         self.deceleration = 18.0
         self.engaged = False
         self.lidar_angle_increment = 0
@@ -247,28 +275,46 @@ class AgentRollout(Node):
             print("Safety brake engaged")
             return True
         #print(scan.ranges)
-        self.ttc = 200
         self.distance = 0
+        self.deceleration = 18.0
+        self.ttc_min = 0.1
         # print(scan)
         time_to_stop = speed / self.deceleration
+        distances = []
+        ranges = []
+        ttcs = []
         for i, range in enumerate(scan):
-            angle = self.lidar_angle_min + i * self.lidar_angle_increment
+            angle = self.lidar_angle_min + i * 20 * self.lidar_angle_increment
+            #print(angle)
             distance = max(speed * math.cos(angle), 0)
-            # print(distance)
-            if distance > 0:
-                ttc = range / distance
+            distances.append(distance)
+            ranges.append(range*10)
+            if distance == 0:
+                ttc = np.inf
+            else:
+                ttc = range*10 / distance
+            ttcs.append(ttc)
                 
-                if ttc < self.ttc:
-                    self.ttc = ttc
-
-                if ttc < self.ttc_min or ttc < time_to_stop:
-                    print("safety_brake: speed={} ttc={} tts={} STOP".format(speed, ttc, time_to_stop))
-                    self.engaged = True
-                    return True
-        #print("ttc", self.ttc)
-        #print("time to stop", time_to_stop)
-        return False
-
+        # collision warnings
+        """
+        if len(ttcs) > 0:
+            x = np.argmin(np.array(ttcs))
+            print(x)
+            print("min ttc", ttcs[x])
+            print("range", ranges[x])
+            print("distance", distances[x])
+        """
+        collision_warnings = 0
+        for ttc in ttcs:
+            if ttc < self.ttc_min or ttc < time_to_stop:
+                print("safety_brake: speed={} ttc={} tts={} min = {} STOP".format(speed, ttc, time_to_stop, ttc < self.ttc_min))
+                # have to find at least a certain number of ttcs
+                collision_warnings += 1
+                
+        if collision_warnings > 3:
+            return True
+        else:
+            return False
     def find_and_remove_closest(self, array, x, wrap_around=0.1):
         # Adjust x by wrap_around amount and handle cyclic behavior
         target_value = (x + wrap_around) % 1
@@ -351,6 +397,9 @@ class AgentRollout(Node):
         # print(self.current_pose)
         
         # print(self.current_lidar_occupancy)
+        # for simulation create fake imu message
+        self.current_imu = [FakeIMU()]
+            
         if self.current_pose is None or self.current_lidar_occupancy is None or self.current_imu is None:
             #print("waiting for pose and lidar data")
             self.get_logger().info(f"waiting for pose, lidar data and imu {self.current_pose is None}, {self.current_lidar_occupancy is None}, {self.current_imu is None}")
@@ -411,17 +460,20 @@ class AgentRollout(Node):
         elif self.state == "decelerate":
             info, action, log_prob = self.reset_agent(obs, deaccelerate=True)
             # decelerate for one second
+            self.current_speed = 0.5
+            # overwritte the second action (speed) to 0
+            action = np.array([[action[0,0], 0.0]])
             if self.timestep > 20:
                 self.state = "reset"
                 self.timestep = 0
 
         elif self.state == "reset":
             # remain stationary for one second
-            self.current_speed = 0.0
+            self.current_speed = 0.5
             self.current_angle = 0.0
             action = np.array([[0.0, 0.0]])
             log_prob = np.array([0.0])
-            if self.timestep > 20:
+            if self.timestep > 3:
                 self.timestep = 0
                 self.target_start = None
                 self.state = "recording"
@@ -432,27 +484,25 @@ class AgentRollout(Node):
         
         if self.state =="recording":
             values, action, log_prob = self.agent(obs, timestep=np.array([self.timestep]))
-            #self.get_logger().info(f"[delta_angles, target_angles, current_angles]: {values}")
-        
-        
+            # for debugging
+            action = np.array([[0.0, 0.0]])
         action_out = action.copy()
         action = action[0] #* 0.15 # hardcoded scaling, TODO!
         
         
         self.current_angle += action[0]
         self.current_speed += action[1]
-        if self.state == "recording":
-            self.current_speed = np.clip(self.current_speed, 0.5, 7.0)
-            
-        if self.terminate:
-            self.current_angle = 0.0
-            self.current_speed = 0.0
+
         #self.get_logger().info()
         #print(action[1])
         #self.get_logger().info(f"current speed {self.current_speed}: {action[1]}")
-        
+        self.current_speed = np.clip(self.current_speed, 0.5, 7.0)
         # assert self.current_speed >= 0.0, "Speed is negative!, it is {}".format(self.current_speed)
-        
+        if self.should_stop(obs["lidar_occupancy"][0], self.current_speed) or self.terminate:
+            self.terminate = True
+            # overwritte
+            self.current_angle = 0.0
+            self.current_speed = 0.0
         # publish the action to ackerman drive
         ackermann_command = AckermannDriveStamped()
         timestamp = self.get_clock().now().to_msg()
@@ -519,9 +569,9 @@ class AgentRollout(Node):
                             action_raw, 
                             time_infos,
                             imu_data), f)
-        if truncated:
+        if truncated or self.terminate:
             self.state = "resetting"
-        
+            self.terminate = False
         self.current_imu = [] # clear the imu
         self.timestep += 1
         self.publish_state_marker()
