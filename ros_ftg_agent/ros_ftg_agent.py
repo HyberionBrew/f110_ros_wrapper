@@ -73,7 +73,7 @@ class AgentRollout(Node):
         self.marker_publisher = self.create_publisher(Marker, 'visualization_marker', 10)
         self.waypoint_publisher = self.create_publisher(Marker, 'waypoint_marker', 10)
         self.start_publisher = self.create_publisher(Marker, 'start_marker', 10)
-        self.imu_subscriber = self.create_subscription(Imu, 'phidgets/imu/data_raw', self.get_imu, 10)
+        self.imu_subscriber = self.create_subscription(Imu, '/razor/imu/data_raw', self.get_imu, 10)
         timer_period = 1/20  # seconds (20 Hz)
         self.timer = self.create_timer(timer_period, self.execute_agent)
         self.agent = agent
@@ -429,6 +429,7 @@ class AgentRollout(Node):
                 self.get_logger().info(f"Recording trajectory: {self.trajectory_num}")
 
         # Immediately start, dont wait until the next timestep
+        
         if self.state =="recording":
             values, action, log_prob = self.agent(obs, timestep=np.array([self.timestep]))
             #self.get_logger().info(f"[delta_angles, target_angles, current_angles]: {values}")
@@ -440,13 +441,16 @@ class AgentRollout(Node):
         
         self.current_angle += action[0]
         self.current_speed += action[1]
+        if self.state == "recording":
+            self.current_speed = np.clip(self.current_speed, 0.5, 7.0)
+            
         if self.terminate:
             self.current_angle = 0.0
             self.current_speed = 0.0
         #self.get_logger().info()
         #print(action[1])
         #self.get_logger().info(f"current speed {self.current_speed}: {action[1]}")
-        self.current_speed = np.clip(self.current_speed, 0.0, 7.0)
+        
         # assert self.current_speed >= 0.0, "Speed is negative!, it is {}".format(self.current_speed)
         
         # publish the action to ackerman drive
@@ -547,7 +551,8 @@ def main(args=None):
     reward_config_path = config["reward_config_path"]
     agent_config_path = config["agent_config_path"]
     reset_agent_path = config["reset_agent_path"]
-    
+
+
     track_path = config["track_path"]
     # "/sim_ws/src/agent_configs/ftg_fast_5.json"
     reward_config = RewardConfig(reward_config_path) 
@@ -555,6 +560,10 @@ def main(args=None):
     agent = agents.load(agent_config_path)
     #reset_agent_path = "/sim_ws/src/agent_configs/reset_agent.json" 
     reset_agent = agents.load(reset_agent_path)
+    
+    import shutil
+    agent_save_path = f"/home/rindt/fabian_agents_run/{str(agent)}.json"
+    shutil.copyfile(agent_config_path, agent_save_path)
 
     rolloutNode = AgentRollout(agent, reset_agent, track_path, num_starting_points=10)
     try:
