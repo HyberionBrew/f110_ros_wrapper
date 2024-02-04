@@ -85,10 +85,11 @@ class AgentRollout(Node):
         self.track = Track(track_path)
         self.progress = Progress(self.track, lookahead=200)
         model_name = str(agent)
-        with open(f"dataset/{model_name}", 'w') as f:
+        with open(f"dataset_eval/{model_name}", 'w') as f:
             pass
         self.initial = False
         self.timestep = 0
+        self.safety_counter = 0
         self.current_lidar_occupancy = None
         self.current_imu = None
         self.laser_scan_sub = self.create_subscription(LaserScan, 'scan', self.get_laser_scan, 10)
@@ -108,7 +109,7 @@ class AgentRollout(Node):
         self.reset_agent = reset_agent
         self.state = "inital"
         self.terminate = False
-
+        self.counter_dormant = 0
 
         self.current_speed = 0.0
         self.current_angle = 0.0
@@ -132,14 +133,20 @@ class AgentRollout(Node):
         self.drop_curr_pose = 0
         self.deaccelerate = False
         self.num_starting_points = num_starting_points
-        self.starting_points_progress = np.linspace(0, 1, self.num_starting_points + 1)[1:] 
+        self.starting_points_progress_inital =[0.0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9]
+        self.starting_points_progress = self.starting_points_progress_inital.copy() #np.linspace(0, 1, self.num_starting_points + 1)[1:] 
+        
         self.target_start = None
         self.i = 0
+        self.x_button = False
 
     
     def joy_callback(self, msg):
         # Check if button 6 (index 5) is pressed
         self.terminate = True
+        self.x_button = False
+        if msg.buttons[0] == 1:
+            self.x_button = True
         if len(msg.buttons) > 5 and msg.buttons[5] == 1:
             # self.get_logger().info('Button 5 is pressed')
             self.terminate = False
@@ -270,23 +277,44 @@ class AgentRollout(Node):
     def detect_collision(self):
         pass
 
-    def should_stop(self, scan, speed):
-        if self.engaged:
-            print("Safety brake engaged")
-            return True
+    def should_stop(self, scan, speed, logger):
         #print(scan.ranges)
         self.distance = 0
-        self.deceleration = 18.0
-        self.ttc_min = 0.1
+        self.deceleration = 15.0
+        self.ttc_min = 0.2
         # print(scan)
         time_to_stop = speed / self.deceleration
         distances = []
         ranges = []
         ttcs = []
+        #logger.info(f"here scan: len({len(scan)})")
         for i, range in enumerate(scan):
+            # logger.info(f"{i}, {range*10}")
+            #if i ==30:
+            #    logger.info(f"{i}, {range*10}, {range*10 < 1.0}")
+            #if i > 10 and i < 45:
+            #    if range * 10 < 0.3:
+            #        return True
+            #if i < 20 or i > 35:
+            #     continue
+            if i < 20 or i > 35:
+                continue
+            # if (i >= 20 and i < 25) or (i>30 and i<=35):
+            #     if range*10 < 0.2:
+            #         return True
+            #     else:
+            #         return False
+            #logger.info(f"HELLLOOOO === {i} {range*10}")
             angle = self.lidar_angle_min + i * 20 * self.lidar_angle_increment
             #print(angle)
-            distance = max(speed * math.cos(angle), 0)
+            distance = max(range*10 * math.cos(angle), 0)
+            if distance < 0.4:
+                return True
+            else:
+                #ttc = distance/speed
+                #if ttc < 0.2:
+                #    return True
+                return False
             distances.append(distance)
             ranges.append(range*10)
             if distance == 0:
@@ -296,22 +324,24 @@ class AgentRollout(Node):
             ttcs.append(ttc)
                 
         # collision warnings
-        """
-        if len(ttcs) > 0:
-            x = np.argmin(np.array(ttcs))
-            print(x)
-            print("min ttc", ttcs[x])
-            print("range", ranges[x])
-            print("distance", distances[x])
-        """
+        
+        #if len(ttcs) > 0:
+            #x = np.argmin(np.array(ttcs))
+            #print(x)
+            #logger.info(f"min ttc: {ttcs[x]}, time_to_stop: {time_to_stop}")
+            #print("min ttc", ttcs[x])
+            #print("range", ranges[x])
+            #print("distance", distances[x])
+    
         collision_warnings = 0
         for ttc in ttcs:
             if ttc < self.ttc_min or ttc < time_to_stop:
-                print("safety_brake: speed={} ttc={} tts={} min = {} STOP".format(speed, ttc, time_to_stop, ttc < self.ttc_min))
+                logger.info("safety_brake: speed={} ttc={} tts={} min = {} STOP".format(speed, ttc, time_to_stop, ttc < self.ttc_min))
                 # have to find at least a certain number of ttcs
                 collision_warnings += 1
                 
-        if collision_warnings > 3:
+                
+        if collision_warnings > 0:
             return True
         else:
             return False
@@ -398,8 +428,8 @@ class AgentRollout(Node):
         
         # print(self.current_lidar_occupancy)
         # for simulation create fake imu message
-        self.current_imu = [FakeIMU()]
-            
+        # self.current_imu = [FakeIMU()]
+        # self.get_logger().info("hi??")
         if self.current_pose is None or self.current_lidar_occupancy is None or self.current_imu is None:
             #print("waiting for pose and lidar data")
             self.get_logger().info(f"waiting for pose, lidar data and imu {self.current_pose is None}, {self.current_lidar_occupancy is None}, {self.current_imu is None}")
@@ -429,6 +459,17 @@ class AgentRollout(Node):
         #self.state = "recording"
         #if self.timestep % 20 == 0:
         #    self.get_logger().info(f"current progress {new_progress}")
+        # self.get_logger().info(f"state: {self.state}")
+        
+        if self.state == "dormant":
+            self.counter_dormant += 1
+            if self.counter_dormant %50 == 0:
+                self.get_logger().info(f"state: {self.state} _new")
+            if self.x_button == True:
+                self.state = "resetting"
+                self.counter_dormant = 0
+            else:
+                return
         if self.state == "resetting":
             
             info, action, log_prob = self.reset_agent(obs, deaccelerate=False)#self.deaccelerate)
@@ -450,7 +491,8 @@ class AgentRollout(Node):
 
                 if self.starting_points_progress.size == 0:
                     # reshuffle and start from the begining
-                    self.starting_points_progress = np.linspace(0, 1, self.num_starting_points + 1)[1:] 
+                    self.starting_points_progress = self.starting_points_progress_inital.copy()
+                    #np.linspace(0, 1, self.num_starting_points + 1)[1:] 
             # if we are within 0.05 of the target start, set deaccelerate to true
             if (abs(self.target_start - new_progress) < 0.05):
                 self.state = "decelerate"
@@ -485,7 +527,7 @@ class AgentRollout(Node):
         if self.state =="recording":
             values, action, log_prob = self.agent(obs, timestep=np.array([self.timestep]))
             # for debugging
-            action = np.array([[0.0, 0.0]])
+            # action = np.array([[0.0, 0.0]])
         action_out = action.copy()
         action = action[0] #* 0.15 # hardcoded scaling, TODO!
         
@@ -498,7 +540,21 @@ class AgentRollout(Node):
         #self.get_logger().info(f"current speed {self.current_speed}: {action[1]}")
         self.current_speed = np.clip(self.current_speed, 0.5, 7.0)
         # assert self.current_speed >= 0.0, "Speed is negative!, it is {}".format(self.current_speed)
-        if self.should_stop(obs["lidar_occupancy"][0], self.current_speed) or self.terminate:
+        #self.get_logger().info("safety_brake")
+        if self.state == "recording":
+            # safety_stop = self.should_stop(obs["lidar_occupancy"][0], self.current_speed, self.get_logger())
+            safety_stop = self.should_stop(obs["lidar_occupancy"][0], self.current_speed, self.get_logger())
+            if safety_stop:
+                self.safety_counter +=1
+                self.get_logger().info(f"safetcy_counter: {self.safety_counter}")
+            else:
+                self.safety_counter = 0
+        else:
+            self.safety_counter=0
+            safety_stop = False
+        if (self.safety_counter>0  or self.terminate) and self.state=="recording":
+            self.safety_counter = 0
+            self.get_logger().info("safety_brake: speed={} safety_stop={} teminate={} safety_counter={} STOP".format(self.current_speed, safety_stop, self.terminate, self.safety_counter))
             self.terminate = True
             # overwritte
             self.current_angle = 0.0
@@ -553,7 +609,7 @@ class AgentRollout(Node):
                 # print(model_name)
                 #self.get_logger().info(f"Imu data length {len(imu_data['timestamp'])}")
                 #self.get_logger().info(f"terminate {self.terminate}")
-                with open(f"dataset/{model_name}", 'ab') as f:
+                with open(f"dataset_eval/{model_name}", 'ab') as f:
                     collision=self.terminate
                     # if terminate log info
                     if self.terminate:
@@ -570,7 +626,10 @@ class AgentRollout(Node):
                             time_infos,
                             imu_data), f)
         if truncated or self.terminate:
-            self.state = "resetting"
+            if self.terminate:
+                self.state = "dormant"
+            else:
+                self.state = "resetting"
             self.terminate = False
         self.current_imu = [] # clear the imu
         self.timestep += 1
