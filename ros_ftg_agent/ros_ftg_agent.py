@@ -308,7 +308,7 @@ class AgentRollout(Node):
             angle = self.lidar_angle_min + i * 20 * self.lidar_angle_increment
             #print(angle)
             distance = max(range*10 * math.cos(angle), 0)
-            if distance < 0.4:
+            if distance < 0.3:
                 return True
             else:
                 #ttc = distance/speed
